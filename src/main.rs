@@ -5,7 +5,8 @@ use windows::{
         UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
     },
     Win32::{
-        System::WinRT::IUserConsentVerifierInterop, UI::WindowsAndMessaging::GetForegroundWindow,
+        Foundation::HWND, System::WinRT::IUserConsentVerifierInterop,
+        UI::WindowsAndMessaging::GetForegroundWindow,
     },
     core::{HSTRING, factory},
 };
@@ -22,8 +23,18 @@ async fn main() -> Result<()> {
             .context("Failed to store secret in keyring")?;
     }
 
+    // We need a parent window for the verification dialog.
+    let parent_window = unsafe { GetForegroundWindow() };
+    if parent_window.is_invalid() {
+        bail!("Failed to get the foreground window handle.");
+    }
+
     // Authenticate with Windows Hello
-    authenticate_windows_hello("Please verify your identity to unlock the secret.").await?;
+    authenticate_windows_hello(
+        parent_window,
+        "Please verify your identity to unlock the secret.",
+    )
+    .await?;
 
     // Display the secret
     let secret = entry.get_password()?;
@@ -37,19 +48,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn authenticate_windows_hello(message: &str) -> Result<()> {
+async fn authenticate_windows_hello(parent_window: HWND, message: &str) -> Result<()> {
     let availability = UserConsentVerifier::CheckAvailabilityAsync()
         .context("Failed to create CheckAvailabilityAsync")?
         .await
         .context("Failed to run CheckAvailabilityAsync")?;
     if availability != UserConsentVerifierAvailability::Available {
         bail!("Windows Hello is not available: {availability:?}");
-    }
-
-    // We need a Window handle for the verification dialog
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.is_invalid() {
-        bail!("Failed to get the foreground window handle.");
     }
 
     // Get the Interop factory for the UserConsentVerifier
@@ -59,7 +64,7 @@ async fn authenticate_windows_hello(message: &str) -> Result<()> {
     let message = HSTRING::from(message);
     let async_op: IAsyncOperation<UserConsentVerificationResult> = unsafe {
         user_consent_interop
-            .RequestVerificationForWindowAsync(hwnd, &message)
+            .RequestVerificationForWindowAsync(parent_window, &message)
             .context("Failed to request verification")?
     };
 
